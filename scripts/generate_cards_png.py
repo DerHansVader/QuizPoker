@@ -60,13 +60,13 @@ PALETTE = {
 }
 
 COLOR_WHITE = "#ffffff"
-COLOR_TEXT_MAIN = "#334155" # Slate 700
-COLOR_TEXT_SUB = "#64748b"  # Slate 500
-COLOR_QR_MAIN = "#334155"
+COLOR_TEXT_MAIN = "#2d2d2d" # Dark Neutral Gray (no saturation)
+COLOR_TEXT_SUB = "#666666"  # Medium Neutral Gray
+COLOR_QR_MAIN = "#2d2d2d"
 
 
 # Web App URL for QR codes
-WEB_APP_URL = "https://derhansvader.github.io/QuizPoker/output/web/index.html"
+WEB_APP_URL = "https://derhansvader.github.io/QuizPoker"
 
 
 # ============================================================================
@@ -99,9 +99,12 @@ def get_font(name: str, size_pt: float) -> ImageFont.FreeTypeFont:
     size_px = int(size_pt * DPI / 72)
     # List of preferred fonts (clean sans-serifs)
     candidates = [
+        # System UI Font style
+        "SanFranciscoDisplay-Bold.otf", "SF-Pro-Display-Bold.otf",
         "HelveticaNeue-Bold.otf", "HelveticaNeue.ttc", 
-        "Arial Bold.ttf", "Arial.ttf",
-        "DejaVuSans-Bold.ttf", "DejaVuSans.ttf"
+        "Roboto-Bold.ttf", "Roboto.ttf",
+        "SegoeUI-Bold.ttf", "SegoeUI.ttf",
+        "Arial Bold.ttf", "Arial.ttf"
     ]
     
     # Try system paths
@@ -352,11 +355,13 @@ def render_card_back(card: CardData, w: int, h: int) -> Image.Image:
     img = Image.new("RGBA", (w, h), (255, 255, 255, 255))
     
     # Shift center up to make room for text at bottom
-    shift_y = MM_TO_PX(5) 
+    # Added ~1% of card height (h) to the top margin by reducing shift_y
+    shift_y = MM_TO_PX(5) - int(h * 0.01)
     cx, cy = int(w / 2), int(h / 2) - shift_y
     
     # 1. Icon (draw first, hexagons go around it)
-    icon_size = int(h * 0.58) # Increased by ~10% (from 0.52)
+    # Reduced by 10% (from 0.58 to 0.522)
+    icon_size = int(h * 0.522) 
     icon = load_category_icon(card.cat_key, icon_size)
     
     # Paste icon centered using alpha composite
@@ -418,138 +423,95 @@ def render_card_back(card: CardData, w: int, h: int) -> Image.Image:
 
 
 def render_card_front(card: CardData, w: int, h: int) -> Image.Image:
-    """Render the FRONT side (Question + QR)."""
-    # Use RGBA for layering
-    img = Image.new("RGBA", (w, h), (255, 255, 255, 255))
-    
-    # 0. Background Color (Very faint accent color)
-    accent_rgba = hex_color_to_rgba(card.theme["bg"], 0.08) # 8% opacity
-    bg_layer = Image.new("RGBA", (w, h), accent_rgba)
-    img.alpha_composite(bg_layer)
-    
+    """Render the FRONT side (Question + QR). Modern Asymmetric Editorial Layout."""
+    # Base: High-quality "Off-White" / Warm Gray
+    # #FDFDFD is softer than #FFFFFF, easier on the eyes in print
+    img = Image.new("RGBA", (w, h), "#FDFDFD")
     draw = ImageDraw.Draw(img)
     
-    # 1. Header Pill/Shape (Centered)
-    # Style: Rounded Hexagon Pill (Hexagon with elongated center)
-    # Or just a Hexagon stretched horizontally?
+    accent_hex = card.theme["bg"]
+    accent_rgb = hex_color_to_rgba(accent_hex, 1.0)
     
-    header_w = w * 0.85 # 85% width
-    header_h = MM_TO_PX(8)
-    header_x = (w - header_w) / 2
-    header_y = MM_TO_PX(4) # Spacing from top
+    # --- 1. The "Power Stripe" (Left Border) ---
+    # 6mm wide stripe on the left edge (Increased from 4mm)
+    stripe_w = MM_TO_PX(6)
+    draw.rectangle([0, 0, stripe_w, h], fill=accent_rgb)
     
-    header_center = (w/2, header_y + header_h/2)
-    accent_rgb = hex_color_to_rgba(card.theme["bg"], 1.0)
+    # --- 2. Typography & Content Area ---
+    # Define margins relative to the stripe
+    content_x = stripe_w + MM_TO_PX(5) # 5mm gap from stripe
+    content_w = w - content_x - MM_TO_PX(4) # 4mm right margin
     
-    # Draw a custom "Hex-Pill" shape
-    # Left Point <--- Rect ---> Right Point
-    # But user asked for "hexagon rounded hexagon shapes outwards left and right"
-    # Let's try to draw a long rectangle with hexagon tips (pointy ends) but rounded?
+    # A. Subcategory (Eyebrow Text) - Top Left
+    # Uppercase, tracking (letter-spacing) increased
+    font_sub = get_font("bold", 7.5) 
+    sub_text = card.subcategory.upper()
     
-    # Simpler and cleaner: A rounded rectangle (pill) is very modern. 
-    # A "Hexagon Pill" would be:
-    #   /---------\
-    # <           >
-    #   \---------/
+    # Draw Subcategory
+    # Color: Matches the accent stripe for cohesion
+    sub_y = MM_TO_PX(6)
     
-    # Let's construct a path for this "Hex-Pill"
-    # Points:
-    # Left Tip (x, mid_y)
-    # Top Left (x + h/2, y)
-    # Top Right (x + w - h/2, y)
-    # Right Tip (x + w, mid_y)
-    # Bottom Right (x + w - h/2, y + h)
-    # Bottom Left (x + h/2, y + h)
+    # Micro-Detail: A tiny colored dot before the text
+    dot_r = MM_TO_PX(0.6)
+    dot_x = content_x + dot_r
+    dot_y = sub_y + MM_TO_PX(1.5) # Vertically align with text cap height roughly
+    draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r], fill=accent_rgb)
     
-    x1, y1 = header_x, header_y
-    x2, y2 = header_x + header_w, header_y + header_h
-    mid_y = header_y + header_h / 2
-    tip_width = header_h / 2 # 45 degree angle roughly
+    # Text offset by dot
+    text_x = content_x + MM_TO_PX(3)
+    draw.text((text_x, sub_y), sub_text, font=font_sub, fill=accent_rgb) 
     
-    # Vertices
-    p_left_tip = (x1, mid_y)
-    p_top_left = (x1 + tip_width, y1)
-    p_top_right = (x2 - tip_width, y1)
-    p_right_tip = (x2, mid_y)
-    p_btm_right = (x2 - tip_width, y2)
-    p_btm_left = (x1 + tip_width, y2)
+    # B. The Question (Hero) - Center-Left
+    # Larger, cleaner, more elegant.
+    font_q = get_font("bold", 14) # Increased from 13
     
-    # Draw rounded rectangle (Pill)
-    # Rectangle with full radius
-    draw.rounded_rectangle(
-        [header_x, header_y, header_x + header_w, header_y + header_h],
-        radius=header_h / 2, # Full radius for pill shape
-        fill=accent_rgb
-    )
-    
-    # 2. Subcategory (Centered in Header Shape)
-    font_sub = get_font("bold", 9) 
-    text_color = "#FFFFFF" 
-    
-    sub_text = " ".join(list(card.subcategory.upper()))
-    
-    # Measure
-    bbox = draw.textbbox((0, 0), sub_text, font=font_sub)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    
-    # Center text visually in the shape
-    # Shifted down slightly to be optically centered
-    text_draw_y = header_y + (header_h - text_h) / 2 - MM_TO_PX(1) + MM_TO_PX(0.5) # Tweaked down
-    
-    draw.text(
-        ((w - text_w) / 2, text_draw_y),
-        sub_text,
-        font=font_sub,
-        fill=text_color
-    )
-    
-    # 3. Question (Centered in main area)
-    font_q = get_font("bold", 12) 
-    
-    margin = MM_TO_PX(8)
-    qr_area_size = MM_TO_PX(10) # Reduced from 12mm to 10mm
-    
-    q_w = w - (margin * 2)
-    top_margin = header_y + header_h + MM_TO_PX(3) # Reduced gap
-    q_h = h - top_margin - margin - MM_TO_PX(4) # Reduced height significantly to avoid QR
+    # Calculate available vertical space for question
+    # Top: Below subcat (say 12mm down)
+    # Bottom: Above footer/QR (say 38mm down)
+    q_start_y = MM_TO_PX(12)
+    q_end_y = h - MM_TO_PX(14) # Leave room for footer
+    q_height = q_end_y - q_start_y
     
     draw_wrapped_text(
         draw, card.question, font_q,
-        (margin, top_margin, q_w, q_h),
-        COLOR_TEXT_MAIN, align="center", valign="center"
+        (content_x, q_start_y, content_w, q_height),
+        COLOR_TEXT_MAIN, 
+        align="left",   # Editorial left alignment
+        valign="center" # Vertically centered in the "body" area
     )
     
-    # 4. QR Code (Bottom Right)
+    # --- 3. The Footer (QR + Meta) ---
+    # Divider Line (Optional, maybe too busy? Let's skip for cleaner look)
+    # draw.line([content_x, h - MM_TO_PX(12), w - MM_TO_PX(4), h - MM_TO_PX(12)], fill="#e2e8f0", width=2)
+
+    # C. QR Code (Bottom Right)
     if HAS_QRCODE:
-        # Generate Dark Accent Color for QR
-        qr_color = adjust_color_brightness(card.theme["bg"], 0.4) # 40% brightness of accent
+        qr_size = MM_TO_PX(11) # Small but scannable
+        qr_x = w - qr_size - MM_TO_PX(4)
+        qr_y = h - qr_size - MM_TO_PX(4)
         
+        # QR Code Generation
         qr = qrcode.QRCode(
-            version=1,
-            error_correction=qrcode.constants.ERROR_CORRECT_L, # Less detail for better print scan
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
             box_size=10, 
             border=0
         )
-        qr.add_data(f"{WEB_APP_URL}?id={card.id}") 
+        qr.add_data(f"{WEB_APP_URL}?q={card.id}") 
         qr.make(fit=True)
-        # Use white back for reliability
-        qr_img = qr.make_image(fill_color=qr_color, back_color="white") 
-        qr_img = qr_img.resize((qr_area_size, qr_area_size), Image.Resampling.LANCZOS)
         
-        qr_x = w - qr_area_size - MM_TO_PX(3)
-        qr_y = h - qr_area_size - MM_TO_PX(3)
-        img.paste(qr_img, (qr_x, qr_y))
-    
-    # 5. ID (Bottom Left)
-    font_id = get_font("regular", 7)
-    draw.text(
-        (MM_TO_PX(4), h - MM_TO_PX(5)),
-        f"#{card.id}",
-        font=font_id,
-        fill=COLOR_TEXT_SUB
-    )
-    
+        # Color matching the text (Slate 700)
+        qr_img = qr.make_image(fill_color=COLOR_TEXT_MAIN, back_color="transparent")
+        qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
+        
+        img.paste(qr_img, (qr_x, qr_y), qr_img)
+        
+    # D. ID (Bottom Left - aligned with content)
+    # Tiny, vertical or horizontal? Horizontal is cleaner.
+    font_id = get_font("regular", 6)
+    id_y = h - MM_TO_PX(6)
+    draw.text((content_x, id_y), f"#{card.id}", font=font_id, fill="#94a3b8") # Slate 400 (very subtle)
+
     return img.convert("RGB")
 
 
