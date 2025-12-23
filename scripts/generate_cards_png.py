@@ -65,6 +65,10 @@ COLOR_TEXT_SUB = "#64748b"  # Slate 500
 COLOR_QR_MAIN = "#334155"
 
 
+# Web App URL for QR codes
+WEB_APP_URL = "https://derhansvader.github.io/QuizPoker/output/web/index.html"
+
+
 # ============================================================================
 # DATA
 # ============================================================================
@@ -521,8 +525,13 @@ def render_card_front(card: CardData, w: int, h: int) -> Image.Image:
         # Generate Dark Accent Color for QR
         qr_color = adjust_color_brightness(card.theme["bg"], 0.4) # 40% brightness of accent
         
-        qr = qrcode.QRCode(box_size=10, border=0)
-        qr.add_data(card.id) 
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L, # Less detail for better print scan
+            box_size=10, 
+            border=0
+        )
+        qr.add_data(f"{WEB_APP_URL}?id={card.id}") 
         qr.make(fit=True)
         # Use white back for reliability
         qr_img = qr.make_image(fill_color=qr_color, back_color="white") 
