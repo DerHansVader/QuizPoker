@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Config
 INPUT_CSV = Path("data/questions.csv")
-OUTPUT_HTML = Path("output/web/index.html")
+OUTPUT_HTML = Path("index.html")
 
 # Palette
 PALETTE = {
@@ -374,7 +374,7 @@ def generate_html(data):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>QuizPoker</title>
+    <title>Science Poker</title>
     <style>{css}</style>
 </head>
 <body>
@@ -383,7 +383,7 @@ def generate_html(data):
 
     <!-- SEARCH -->
     <div id="view-search">
-        <div class="logo">QUIZ<span>POKER</span></div>
+        <div class="logo">SCIENCE<span>POKER</span></div>
         <div class="search-box">
             <input type="number" id="id-input" class="id-input" placeholder="#" inputmode="numeric">
             <button class="go-btn" onclick="search()">Start Round</button>
@@ -455,7 +455,8 @@ def generate_html(data):
 
         // --- INIT ---
         window.addEventListener('DOMContentLoaded', () => {{
-            const id = new URLSearchParams(window.location.search).get('id');
+            const params = new URLSearchParams(window.location.search);
+            const id = params.get('q') || params.get('id');
             setupInteractions();
             if(id) loadCard(id);
         }});
@@ -468,7 +469,9 @@ def generate_html(data):
         function search() {{
             const val = document.getElementById('id-input').value.trim();
             if(val && DB[val]) {{
-                history.pushState({{}}, '', '?id='+val);
+                const url = new URL(window.location);
+                url.searchParams.set('q', val);
+                history.pushState({{}}, '', url);
                 loadCard(val);
             }} else {{
                 showToast("Card ID not found");

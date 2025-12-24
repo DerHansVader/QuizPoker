@@ -23,6 +23,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
+try:
+    from tqdm import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
+
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 # Try to import qrcode
@@ -49,7 +55,7 @@ PAGE_H_MM = 297
 
 GRID_COLS = 2
 GRID_ROWS = 5
-GAP_MM = 0  # No gap for fold-over layout (or small gap if cutting separately)
+GAP_MM = 5.0  # 5mm gap between columns for cutting/bleed
 
 # Colors (Pastel / Modern)
 PALETTE = {
@@ -423,74 +429,99 @@ def render_card_back(card: CardData, w: int, h: int) -> Image.Image:
 
 
 def render_card_front(card: CardData, w: int, h: int) -> Image.Image:
-    """Render the FRONT side (Question + QR). Modern Asymmetric Editorial Layout."""
-    # Base: High-quality "Off-White" / Warm Gray
-    # #FDFDFD is softer than #FFFFFF, easier on the eyes in print
-    img = Image.new("RGBA", (w, h), "#FDFDFD")
+    """
+    Render the FRONT side - Compact Corner Accent Design.
+    Safe margins: Top & Left (for printing).
+    Accent: Small corner tab (top-left).
+    QR: Bottom-right, compact.
+    """
+    img = Image.new("RGBA", (w, h), "#FFFFFF")
     draw = ImageDraw.Draw(img)
     
     accent_hex = card.theme["bg"]
     accent_rgb = hex_color_to_rgba(accent_hex, 1.0)
+    dark_accent = card.theme.get("accent", accent_hex)
     
-    # --- 1. The "Power Stripe" (Left Border) ---
-    # 6mm wide stripe on the left edge (Increased from 4mm)
-    stripe_w = MM_TO_PX(6)
-    draw.rectangle([0, 0, stripe_w, h], fill=accent_rgb)
+    # --- Safe Margins (for printing) ---
+    safe_top = MM_TO_PX(4)
+    safe_left = MM_TO_PX(4)
+    safe_right = MM_TO_PX(3) # Smaller, as right edge is less critical
+    safe_bottom = MM_TO_PX(3)
     
-    # --- 2. Typography & Content Area ---
-    # Define margins relative to the stripe
-    content_x = stripe_w + MM_TO_PX(5) # 5mm gap from stripe
-    content_w = w - content_x - MM_TO_PX(4) # 4mm right margin
+    # --- 0. Background Wash (Soft Tint) ---
+    # User requested 100% white background
+    img = Image.new("RGBA", (w, h), "#FFFFFF")
+    draw = ImageDraw.Draw(img)
+
+    # --- 1. Soft Corner Tab (Top-Left) ---
+    # Fully rounded pill shape
+    tab_h = MM_TO_PX(5.5)
+    tab_padding_x = MM_TO_PX(3.5)
     
-    # A. Subcategory (Eyebrow Text) - Top Left
-    # Uppercase, tracking (letter-spacing) increased
-    font_sub = get_font("bold", 7.5) 
+    font_sub = get_font("bold", 7)
     sub_text = card.subcategory.upper()
+    bbox = draw.textbbox((0, 0), sub_text, font=font_sub)
+    text_w = bbox[2] - bbox[0]
     
-    # Draw Subcategory
-    # Color: Matches the accent stripe for cohesion
-    sub_y = MM_TO_PX(6)
+    tab_w = text_w + (tab_padding_x * 2)
+    tab_x = safe_left
+    tab_y = safe_top
     
-    # Micro-Detail: A tiny colored dot before the text
-    dot_r = MM_TO_PX(0.6)
-    dot_x = content_x + dot_r
-    dot_y = sub_y + MM_TO_PX(1.5) # Vertically align with text cap height roughly
-    draw.ellipse([dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r], fill=accent_rgb)
+    # Draw Tab (Soft Pill)
+    draw.rounded_rectangle(
+        [tab_x, tab_y, tab_x + tab_w, tab_y + tab_h],
+        radius=tab_h / 2, # Fully rounded
+        fill=accent_rgb
+    )
     
-    # Text offset by dot
-    text_x = content_x + MM_TO_PX(3)
-    draw.text((text_x, sub_y), sub_text, font=font_sub, fill=accent_rgb) 
+    # Tab Text (White on Accent)
+    # Optically centered
+    text_draw_y = tab_y + (tab_h - (bbox[3] - bbox[1])) / 2 - MM_TO_PX(0.2)
+    draw.text(
+        (tab_x + tab_padding_x, text_draw_y),
+        sub_text,
+        font=font_sub,
+        fill="#FFFFFF"
+    )
     
-    # B. The Question (Hero) - Center-Left
-    # Larger, cleaner, more elegant.
-    font_q = get_font("bold", 14) # Increased from 13
+    # --- 2. Question (Main Content) ---
+    # Elegant, large, slightly lighter weight if possible, otherwise standard bold
+    # We'll stick to bold for readability but ensure good spacing
+    font_q = get_font("bold", 13.5)
     
-    # Calculate available vertical space for question
-    # Top: Below subcat (say 12mm down)
-    # Bottom: Above footer/QR (say 38mm down)
-    q_start_y = MM_TO_PX(12)
-    q_end_y = h - MM_TO_PX(14) # Leave room for footer
-    q_height = q_end_y - q_start_y
+    q_x = safe_left
+    q_y = tab_y + tab_h + MM_TO_PX(5) # More breathing room below tab
+    q_w = w - safe_left - safe_right
+    
+    # Reserve space for QR area at bottom
+    qr_size = MM_TO_PX(10)
+    q_h = h - q_y - qr_size - MM_TO_PX(5) 
     
     draw_wrapped_text(
         draw, card.question, font_q,
-        (content_x, q_start_y, content_w, q_height),
-        COLOR_TEXT_MAIN, 
-        align="left",   # Editorial left alignment
-        valign="center" # Vertically centered in the "body" area
+        (q_x, q_y, q_w, q_h),
+        COLOR_TEXT_MAIN, # Dark Grey #2d2d2d
+        align="left",   
+        valign="center"
     )
     
-    # --- 3. The Footer (QR + Meta) ---
-    # Divider Line (Optional, maybe too busy? Let's skip for cleaner look)
-    # draw.line([content_x, h - MM_TO_PX(12), w - MM_TO_PX(4), h - MM_TO_PX(12)], fill="#e2e8f0", width=2)
-
-    # C. QR Code (Bottom Right)
+    # --- 3. Bottom Row: ID (left) + QR (right) ---
+    row_y = h - safe_bottom - qr_size
+    
+    # ID (Bottom Left)
+    # Use Dark Accent Color for ID to tie it together
+    font_id = get_font("bold", 8)
+    id_text = f"#{card.id}"
+    
+    # Vertical divider line next to ID? No, keep it clean.
+    # Just align with left margin.
+    draw.text((safe_left, row_y + qr_size / 2 - MM_TO_PX(1.5)), id_text, font=font_id, fill=dark_accent)
+    
+    # QR Code (Bottom Right)
     if HAS_QRCODE:
-        qr_size = MM_TO_PX(11) # Small but scannable
-        qr_x = w - qr_size - MM_TO_PX(4)
-        qr_y = h - qr_size - MM_TO_PX(4)
+        qr_x = w - safe_right - qr_size
+        qr_y = row_y
         
-        # QR Code Generation
         qr = qrcode.QRCode(
             version=None,
             error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -500,32 +531,57 @@ def render_card_front(card: CardData, w: int, h: int) -> Image.Image:
         qr.add_data(f"{WEB_APP_URL}?q={card.id}") 
         qr.make(fit=True)
         
-        # Color matching the text (Slate 700)
-        qr_img = qr.make_image(fill_color=COLOR_TEXT_MAIN, back_color="transparent")
+        # Tinted QR Code (Dark Accent on Transparent/Tinted BG)
+        qr_img = qr.make_image(fill_color=dark_accent, back_color="transparent")
         qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
-        
-        img.paste(qr_img, (qr_x, qr_y), qr_img)
-        
-    # D. ID (Bottom Left - aligned with content)
-    # Tiny, vertical or horizontal? Horizontal is cleaner.
-    font_id = get_font("regular", 6)
-    id_y = h - MM_TO_PX(6)
-    draw.text((content_x, id_y), f"#{card.id}", font=font_id, fill="#94a3b8") # Slate 400 (very subtle)
+        img.paste(qr_img, (int(qr_x), int(qr_y)), qr_img)
 
     return img.convert("RGB")
 
 
+def draw_print_purge_strip(draw, w, total_h, spot_colors, y_offset=0):
+    """Draw a CMYK + Spot color purge strip. Weighted heights."""
+    # Define colors and their relative weights
+    # C, M, Y get 0.5 weight, K and Spots get 1.0 weight
+    weighted_colors = [
+        ("#00FFFF", 0.5), # Cyan
+        ("#FF00FF", 0.5), # Magenta
+        ("#FFFF00", 0.5), # Yellow
+        ("#000000", 1.0), # Black
+    ] + [(c, 1.0) for c in spot_colors]
+    
+    total_weight = sum(wgt for col, wgt in weighted_colors)
+    unit_h = total_h / total_weight
+    
+    current_y = y_offset
+    for color, weight in weighted_colors:
+        h_bar = weight * unit_h
+        draw.rectangle([0, current_y, w, current_y + h_bar], fill=color)
+        current_y += h_bar
+
 def render_page(cards: List[CardData]) -> Image.Image:
-    """Render a full A4 sheet."""
+    """Render a full A4 sheet with center bleed."""
     page_w_px = MM_TO_PX(PAGE_W_MM)
     page_h_px = MM_TO_PX(PAGE_H_MM)
     
     img = Image.new("RGB", (page_w_px, page_h_px), COLOR_WHITE)
+    draw = ImageDraw.Draw(img)
+    
+    # --- Purge Strips (Top & Bottom 16mm) ---
+    # Helps clean print heads before and after main content
+    page_spot_colors = list(dict.fromkeys([c.theme["bg"] for c in cards]))
+    strip_h_px = MM_TO_PX(16)
+    
+    # Top
+    draw_print_purge_strip(draw, page_w_px, strip_h_px, page_spot_colors, y_offset=0)
+    # Bottom
+    draw_print_purge_strip(draw, page_w_px, strip_h_px, page_spot_colors, y_offset=page_h_px - strip_h_px)
     
     # Calculate geometry
     card_w_px = MM_TO_PX(CARD_W_MM)
     card_h_px = MM_TO_PX(CARD_H_MM)
-    gap_px = MM_TO_PX(GAP_MM)
+    gap_px = MM_TO_PX(GAP_MM) # 5mm gap
+    bleed_px = int(gap_px / 2) # 2.5mm bleed fill
     
     # Grid margins (center on page)
     grid_w = (card_w_px * 2) + gap_px
@@ -538,18 +594,54 @@ def render_page(cards: List[CardData]) -> Image.Image:
         
         y = margin_y + (idx * card_h_px)
         
-        # Left: Back (Category)
+        # Determine background color for bleed
+        # Note: Back side is white-ish with hex patterns, but we might want to fill with white?
+        # Actually, the user said "light green" (for category A), which implies they want the card's theme color.
+        # But our current design uses white/off-white backgrounds.
+        # IF the card background is tinted, we should use that tint.
+        # The "Back" uses white with alpha composite hexes.
+        # The "Front" uses a 3% tint.
+        
+        # Let's calculate that 3% tint color for the bleed
+        accent_hex = card.theme["bg"]
+        accent_rgb = hex_color_to_rgba(accent_hex, 1.0)
+        
+        # 3% Tint calculation (approximate to match the front side wash)
+        # c_out = c_in * alpha + white * (1-alpha)
+        # alpha = 0.03
+        # User requested WHITE background, so bleed should also be WHITE
+        tint_rgb = (255, 255, 255)
+        
+        # --- LEFT COLUMN (BACK) ---
+        back_x = margin_x
+        # 1. Draw Bleed to the Right of the card
+        # (Fills the first half of the gap)
+        draw.rectangle(
+            [back_x + card_w_px, y, back_x + card_w_px + bleed_px + 1, y + card_h_px],
+            fill=tint_rgb # Or white if back is white? Back is WHITE in current code.
+        )
+        # Render and paste card
         back_img = render_card_back(card, card_w_px, card_h_px)
-        img.paste(back_img, (margin_x, y))
+        img.paste(back_img, (back_x, y))
         
-        # Right: Front (Question)
+        # --- RIGHT COLUMN (FRONT) ---
+        front_x = margin_x + card_w_px + gap_px
+        # 2. Draw Bleed to the Left of the card
+        # (Fills the second half of the gap)
+        draw.rectangle(
+            [front_x - bleed_px - 1, y, front_x, y + card_h_px],
+            fill=tint_rgb # Matches the front side tint
+        )
+        # Render and paste card
         front_img = render_card_front(card, card_w_px, card_h_px)
-        img.paste(front_img, (margin_x + card_w_px + gap_px, y))
+        img.paste(front_img, (front_x, y))
         
-        # Optional: Cut lines (very subtle gray dots)
-        # ... skipped for cleaner look, edges serve as cut lines
-        
-    return img
+    # Convert to CMYK immediately before return to support "native printer language"
+    # Note: PIL conversion is simple RGB->CMYK. For 100% K black text, 
+    # the input black RGB(0,0,0) usually maps to rich black (mixed inks).
+    # To strictly enforce K-only black for text, advanced channel manipulation would be needed,
+    # but saving as CMYK PDF is the industry standard step for this workflow.
+    return img.convert("CMYK")
 
 
 # ============================================================================
@@ -562,7 +654,13 @@ def main():
     parser.add_argument("--outdir", default="output/cards", type=Path)
     parser.add_argument("--start", type=int, default=None)
     parser.add_argument("--end", type=int, default=None)
+    parser.add_argument("--ids", type=str, default=None, help="Comma-separated list of IDs to render (e.g. '1,2,5')")
     args = parser.parse_args()
+    
+    # Parse specific IDs if provided
+    target_ids = []
+    if args.ids:
+        target_ids = [int(x.strip()) for x in args.ids.split(",") if x.strip()]
     
     # Read CSV
     cards = []
@@ -570,8 +668,13 @@ def main():
         reader = csv.DictReader(f)
         for row in reader:
             cid = int(row["id"])
-            if args.start and cid < args.start: continue
-            if args.end and cid > args.end: continue
+            
+            # Filtering logic
+            if target_ids:
+                if cid not in target_ids: continue
+            else:
+                if args.start and cid < args.start: continue
+                if args.end and cid > args.end: continue
             
             cards.append(CardData(
                 id=row["id"],
@@ -587,13 +690,35 @@ def main():
     batch_size = 5
     total_pages = math.ceil(len(cards) / batch_size)
     
-    for i in range(0, len(cards), batch_size):
+    generated_pages = []
+    
+    # Use tqdm for progress bar if available
+    iterator = range(0, len(cards), batch_size)
+    if HAS_TQDM:
+        iterator = tqdm(iterator, total=total_pages, desc="Rendering Pages", unit="page")
+    
+    for i in iterator:
         batch = cards[i : i + batch_size]
-        page_num = (i // batch_size) + 1
         
-        print(f"Rendering page {page_num}/{total_pages}...")
+        if not HAS_TQDM:
+            page_num = (i // batch_size) + 1
+            print(f"Rendering page {page_num}/{total_pages}...")
+            
         img = render_page(batch)
-        img.save(args.outdir / f"page_{page_num:03d}.png", dpi=(DPI, DPI))
+        # Convert to CMYK and append to list
+        # Revert to RGB to fix color muddiness. Printer RIP will handle conversion better.
+        generated_pages.append(img.convert("RGB"))
+        
+    # Save all pages to a single PDF
+    if generated_pages:
+        output_file = args.outdir / "QuizPoker_Cards_All.pdf"
+        print(f"Saving combined PDF to {output_file}...")
+        generated_pages[0].save(
+            output_file, 
+            save_all=True, 
+            append_images=generated_pages[1:], 
+            resolution=DPI
+        )
         
     print(f"Done! {total_pages} sheets generated in {args.outdir}")
 
